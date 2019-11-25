@@ -152,3 +152,61 @@ weather_df =
   select(name, id, everything())
 ```
 
+```{r}
+simple_model = lm(tmax ~ tmin, data = weather_df)
+simple_model %>% broom::glance() %>% select(r.squared) %>% pull(1)
+temp = simple_model %>% broom::tidy() %>% select(estimate) %>% pull(1)
+log(temp[1] * temp[2])
+```
+
+```{r}
+set.seed(1)
+
+weather_results = 
+  weather_df %>% 
+  select(tmin, tmax) %>% 
+  bootstrap(n = 5000) %>% 
+  mutate(
+    models = map(strap, ~lm(tmax ~ tmin, data = .x)),
+    tidy_results = map(models, broom::tidy),
+    glance_results = map(models, broom::glance)
+  ) 
+
+r_squares = weather_results %>% 
+  select(glance_results) %>% 
+  unnest(glance_results) %>% 
+  select(r.squared) 
+
+betas = weather_results %>% 
+  select(tidy_results) %>% 
+  unnest(tidy_results) %>% 
+  select(estimate) %>% 
+  pull(1)
+
+log_vals = numeric(length(betas)/2)
+
+for (i in seq(1, length(betas), 2)) {
+  #print(i)
+  #print(log_vals[(i+1)%/%2])
+  log_vals[(i+1)/2] = log(betas[i] * betas[i+1])
+  #print(log(betas[i] * betas[i+1]))
+  #print(log_vals[(i+1)/2])
+  #break
+}
+```
+
+R-squared distribution and 95% CI. The distribution is largely normal with a very slight left skew. Median is at 0.9118 with a 95% CI of (0.8937, 0.9271)
+```{r}
+r_squares %>% ggplot(aes(x = r.squared)) + geom_density()
+summary(r_squares)
+r_squares %>% pull(1) %>% quantile(c(.025, .975))
+```
+
+Log of B0 and B1 distribution and 95% CI. The distribution is largely normal with the median equal to the mean. Median (and mean) is at 2.013 with a 95% CI of (1.965, 2.059)
+```{r}
+log_vals = as_tibble(log_vals)
+log_vals %>% ggplot(aes(x = value)) + geom_density()
+summary(log_vals)
+log_vals %>% pull(1) %>% quantile(c(.025, .975))
+```
+
