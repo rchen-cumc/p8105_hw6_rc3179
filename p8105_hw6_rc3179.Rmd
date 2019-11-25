@@ -7,7 +7,8 @@ output: github_document
 
 ```{r setup, include=FALSE}
 library(tidyverse)
-
+library(modelr)
+library(gridExtra)
 knitr::opts_chunk$set(
 	echo = TRUE,
 	warning = FALSE,
@@ -24,5 +25,130 @@ scale_fill_discrete = scale_fill_viridis_d
 theme_set(theme_minimal() + theme(legend.position = "bottom"))
 ```
 
-## R Markdown
+## Problem 1
+
+```{r}
+birth_data = read_csv('./data/birthweight.csv') %>% janitor::clean_names()
+
+#look for missing data
+colSums(is.na(birth_data))
+
+birth_data = 
+  birth_data %>% 
+  mutate(
+    babysex = as.factor(if_else(babysex == 1, "male", "female")),
+    frace = case_when(
+      (frace == 1) ~ "white",
+      (frace == 2) ~ "black",
+      (frace == 3) ~ "asian",
+      (frace == 4) ~ "puerto_rican",
+      (frace == 8) ~ "other",
+      (frace == 9) ~ "unknown",
+    ),
+    frace = as.factor(frace),
+    mrace = case_when(
+      (mrace == 1) ~ "white",
+      (mrace == 2) ~ "black",
+      (mrace == 3) ~ "asian",
+      (mrace == 4) ~ "puerto_rican",
+      (mrace == 8) ~ "other",
+      (mrace == 9) ~ "unknown",
+    ),
+    mrace = as.factor(mrace),
+    malform = as.factor(if_else(malform == 0, "absent", "present"))
+  )
+```
+There is no missing data in any of the columns. The variables babysex, frace, mrace, and malform were successfully converted into factor variables.
+
+Exploring the data by plotting everything:
+```{r}
+par(mfrow = c(4, 5))
+
+vars = birth_data %>% select(-bwt) %>% colnames()
+plots = list()
+for (i in 1:length(vars)) {
+  plots[[i]] = ggplot(birth_data, aes_string(x = vars[i], y = "bwt")) + geom_point()
+}
+do.call(grid.arrange, plots)
+```
+
+From the scatter plots, seems that bhead, blength, delwt, gaweeks, malform, momage, and wtgain appear most correlated with birth weight, which we add to our hypothesis model
+```{r}
+hypothesis_model = 
+  lm(bwt ~ bhead + blength + delwt + gaweeks + malform + momage + wtgain, 
+     data = birth_data)
+all_model = lm(bwt ~ ., data = birth_data)
+hypothesis_model %>% 
+  broom::tidy() %>% 
+  select(term, estimate, p.value) %>% 
+  knitr::kable(digits = 4)
+all_model %>% 
+  broom::tidy() %>% 
+  select(term, estimate, p.value) %>% 
+  knitr::kable(digits = 4)
+
+birth_data %>% 
+  add_predictions(hypothesis_model) %>% 
+  add_residuals(hypothesis_model) %>% 
+  ggplot(aes(x = pred, y = resid)) + 
+  geom_point()
+```
+
+```{r}
+length_age_model = lm(bwt ~ blength + gaweeks, data = birth_data)
+interaction_model = lm(bwt ~ bhead + blength + babysex + bhead * blength + bhead * babysex +
+                         blength * babysex + bhead * blength * babysex, data = birth_data)
+
+cv_df = 
+  crossv_mc(birth_data, 100) #%>% 
+  #mutate(
+  #  train = map(train, as_tibble),
+  #  test = map(test, as_tibble)
+  #)
+
+cv_df =
+  cv_df %>% 
+  mutate(
+    hypothesis_model = map(train, ~lm(bwt ~ bhead + blength + delwt + gaweeks + malform + 
+                                        momage + wtgain, data = .x)), 
+    #all_model = map(train, ~lm(bwt ~ ., data = .x)),
+    length_age_model = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
+    interaction_model = map(train, ~lm(bwt ~ bhead + blength + babysex + bhead * blength + 
+                                         bhead * babysex + blength * babysex + 
+                                         bhead * blength * babysex, data = .x))
+  ) %>% 
+  mutate(
+    rmse_hypothesis_model = map2_dbl(hypothesis_model, test, ~rmse(model = .x, data = .y)),
+    #rmse_all_model = map2_dbl(all_model, test, ~rmse(model = .x, data = .y)),
+    rmse_length_age_model = map2_dbl(length_age_model, test, ~rmse(model = .x, data = .y)),
+    rmse_interaction_model = map2_dbl(interaction_model, test, ~rmse(model = .x, data = .y)),
+    )
+
+cv_df %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model",
+    values_to = "rmse",
+    names_prefix = "rmse_"
+  ) %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse)) + geom_violin()
+```
+
+## Problem 2
+
+```{r}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2017-01-01",
+    date_max = "2017-12-31") %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+```
 
